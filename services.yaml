@@ -1,0 +1,29 @@
+# ============================================================================
+# Kalm 后端子进程服务定义
+# ============================================================================
+
+Ollama:
+  type: cmd
+  command: "ollama serve"
+  host: "http://127.0.0.1"
+  port: 11434
+  ready_keyword: "Listening"
+  stop_command: 'powershell -Command "Invoke-RestMethod -Uri http://127.0.0.1:11434/api/generate -Method Post -ContentType ''application/json'' -Body ''{\"model\": \"gemma3:12b\", \"prompt\": \"unload\", \"keep_alive\": \"0s\"}'' -ErrorAction SilentlyContinue"'
+  manage_lifecycle: true
+
+ComfyUI:
+  type: ps1
+  path: "D:/AIGC/new_project/MediaGenerator/run-whitelist.ps1"
+  host: "http://127.0.0.1"
+  port: 7001
+  ready_keyword: "To see the GUI go to"
+  manage_lifecycle: true
+
+TTS:
+  type: ps1
+  path: "D:/AIGC/Background_Tasks/IndexTTS-API/P8001.ps1"
+  host: "http://127.0.0.1"
+  port: 8001
+  token: "123456"
+  ready_keyword: "started"
+  manage_lifecycle: true

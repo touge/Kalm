@@ -1,0 +1,2 @@
+
+.\.venv\python main.py
