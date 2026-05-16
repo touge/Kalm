@@ -6,10 +6,12 @@ GET /file/{service_name}/{*file_path}
 前端通过此端点访问后端服务生成的文件（图片、音频等），无需知道后端实际地址。
 做好纯字节流中转，不关心文件内容和类型。
 """
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
-import httpx
+import requests as sync_requests
 from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response
 
 from src.core.service_controller import service_controller
 from src.core.response import error
@@ -17,28 +19,29 @@ from src.logic.logger import log
 
 router = APIRouter(tags=["Proxy"])
 
-# 使用 httpx 异步客户端复用连接
-_client: httpx.AsyncClient = None
+_executor = ThreadPoolExecutor(max_workers=4)
 
 
-def _get_client() -> httpx.AsyncClient:
-    global _client
-    if _client is None:
-        _client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
-    return _client
+def _fetch_sync(url: str, headers: dict, timeout: int = 30) -> tuple:
+    """同步拉取文件（线程池中运行，默认模式直接读 content，与 GUI 项目行为一致）"""
+    resp = sync_requests.get(url, headers=headers, timeout=timeout)
+    return resp.status_code, dict(resp.headers), resp.content
 
+
+def _post_sync(url: str, headers: dict, body: bytes, timeout: int = 30) -> tuple:
+    """同步 POST 请求，透传 raw body"""
+    safe_headers = {k: v for k, v in headers.items() if k.lower() not in ("host", "content-length")}
+    resp = sync_requests.post(url, headers=safe_headers, data=body, timeout=timeout)
+    return resp.status_code, dict(resp.headers), resp.content
 
 async def close_client():
-    global _client
-    if _client is not None:
-        await _client.aclose()
-        _client = None
+    _executor.shutdown(wait=False)
 
 
-@router.api_route("/file/{service_name}/{file_path:path}", methods=["GET", "HEAD"])
+@router.api_route("/file/{service_name}/{file_path:path}", methods=["GET", "HEAD", "POST"])
 async def proxy_file(service_name: str, file_path: str, request: Request):
     """
-    通用文件代理：从指定后端服务拉取文件并流式返回给前端。
+    通用文件代理：从指定后端服务拉取文件并返回给前端，或向其发送文件。
 
     - service_name: 对应 services.yaml 中的服务名（如 ComfyUI, TTS）
     - file_path: 文件在后端服务上的路径
@@ -51,56 +54,51 @@ async def proxy_file(service_name: str, file_path: str, request: Request):
     if request.url.query:
         backend_url += f"?{request.url.query}"
 
+    headers = dict(request.headers)
+
+    svc = service_controller.get_service_config(service_name)
+    if svc:
+        token = svc.get("token", "")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
     try:
-        client = _get_client()
-        headers = {}
-
-        # 透传前端的 Range / If-None-Match 等请求头
-        if "range" in request.headers:
-            headers["range"] = request.headers["range"]
-
-        # 如果后端服务配置了 token，自动带上认证头
-        svc = service_controller.get_service_config(service_name)
-        if svc:
-            token = svc.get("token", "")
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
-
-        backend_resp = await client.send(
-            client.build_request("GET", backend_url, headers=headers),
-            stream=True,
-        )
-
-        if backend_resp.status_code >= 400:
-            log.warning(f"[FileProxy] Backend returned {backend_resp.status_code}: {backend_url}")
-            return error(
-                f"Backend returned {backend_resp.status_code}",
-                backend_resp.status_code,
-            )
-
-        # 透传 Content-Type 和其他关键响应头
-        response_headers = {}
-        for key in ("content-type", "content-length", "content-disposition", "etag", "cache-control"):
-            if key in backend_resp.headers:
-                response_headers[key] = backend_resp.headers[key]
-
         service_controller.download_begin(service_name)
 
-        async def stream_with_tracking():
-            try:
-                async for chunk in backend_resp.aiter_bytes():
-                    yield chunk
-            finally:
-                service_controller.download_end(service_name)
+        loop = asyncio.get_event_loop()
+        
+        if request.method == "POST":
+            body = await request.body()
+            status_code, resp_headers, content = await loop.run_in_executor(
+                _executor, _post_sync, backend_url, headers, body
+            )
+        else:
+            status_code, resp_headers, content = await loop.run_in_executor(
+                _executor, _fetch_sync, backend_url, headers
+            )
 
-        return StreamingResponse(
-            stream_with_tracking(),
-            status_code=backend_resp.status_code,
+        if status_code >= 400:
+            log.warning(f"[FileProxy] Backend returned {status_code}: {backend_url}")
+            return error(f"Backend returned {status_code}", status_code)
+
+        log.info(f"[FileProxy] {service_name}:{file_path} -> {len(content)} bytes")
+
+        response_headers = {}
+        for key in ("content-type", "content-length", "content-disposition", "etag", "cache-control"):
+            if key in resp_headers:
+                response_headers[key] = resp_headers[key]
+
+        return Response(
+            content=content,
+            status_code=status_code,
             headers=response_headers,
+            media_type=response_headers.get("content-type"),
         )
 
-    except httpx.ConnectError:
+    except sync_requests.ConnectionError:
         return error(f"Backend service '{service_name}' is not reachable", 502)
     except Exception as e:
         log.error(f"[FileProxy] Error proxying {backend_url}: {e}")
         return error(f"Proxy error: {str(e)}", 500)
+    finally:
+        service_controller.download_end(service_name)

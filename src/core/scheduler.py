@@ -143,8 +143,12 @@ class TaskScheduler:
 
                 # 标记产出并等待客户端下载完成，才处理下一个任务
                 if required_service:
-                    service_controller.mark_has_outputs(required_service)
-                    service_controller._wait_downloads(required_service, timeout=self.download_idle_timeout)
+                    task_info = TaskManager.get_task(task_id)
+                    if task_info and task_info.get("status") == TaskManager.STATUS_FAILED:
+                        log.info(f"[Scheduler] Task {task_id} failed, skipping download wait.")
+                    else:
+                        service_controller.mark_has_outputs(required_service)
+                        service_controller._wait_downloads(required_service, timeout=self.download_idle_timeout)
 
             except Exception as e:
                 log.error(f"[Scheduler] Critical error in scheduler loop: {e}", exc_info=True)

@@ -17,7 +17,8 @@ python main.py
 
 | 模式 | 端点 | 适用任务 | 说明 |
 |------|------|---------|------|
-| HTTP 轮询 | `POST /interface/tasks/submit` + `GET /interface/tasks/{id}/status` | `comfyui` `llm` `tts` | 提交返回 task_id，轮询拿结果 |
+| HTTP 轮询 | `POST /interface/tasks/submit` + `GET /interface/tasks/{id}/status` | `comfyui` `llm` `tts` `subtitle` | 提交返回 task_id，轮询拿结果 |
+| multipart 上传 | `POST /interface/tasks/submit` (multipart/form-data) | `subtitle` | 上传音频文件 + 文稿，轮询拿 SRT |
 | WebSocket | `GET /interface/tasks/{id}/ws` | `comfyui` 实时进度 | 透传 ComfyUI 原生 WS 协议 |
 | HTTP 流式 | `POST /interface/llm/generate-stream` | `llm_streaming` | NDJSON 逐 token 推送 |
 
@@ -30,7 +31,7 @@ POST /interface/tasks/submit
 Content-Type: application/json
 
 {
-  "task_type": "comfyui",       // comfyui | llm | tts
+  "task_type": "comfyui",       // comfyui | llm | tts | subtitle
   "payload": { ... }            // 透传给后端，不同任务类型不同
 }
 ```
@@ -90,6 +91,34 @@ Content-Type: application/json
 GET /interface/llm/models
 ```
 
+### TTS 语音 + 字幕（一条龙）
+
+```http
+POST /interface/tasks/submit
+Content-Type: application/json
+
+{ "task_type": "tts", "payload": { "path": "/v1.5/generate", "text": "...", "speaker": "...", "generate_subtitle": true } }
+```
+
+完成后通过静态端点下载产物：
+```http
+GET /file/tts/static/{backend_task_id}/{backend_task_id}.wav   # 音频
+GET /file/tts/static/{backend_task_id}/{backend_task_id}.srt   # 字幕
+```
+
+### 字幕独立生成（已有音频）
+
+```http
+POST /interface/tasks/submit
+Content-Type: multipart/form-data
+
+task_type: subtitle
+text: 文稿内容
+audio_file: <音频文件>
+```
+
+产物下载：`GET /file/tts/static/{backend_task_id}/subtitle.srt`
+
 ### 文件访问
 
 ```http
@@ -103,6 +132,19 @@ GET /file/{service_name}/{file_path}
 | ComfyUI | 7001 | HTTP + WebSocket |
 | Ollama | 11434 | HTTP |
 | TTS | 8001 | HTTP |
+
+## 测试
+
+```powershell
+# 独立字幕
+python test/test_subtitle.py
+# TTS + 字幕一条龙
+python test/test_tts_subtitle.py
+# 交叉并发测试
+python test/test_cross.py
+```
+
+产物输出到 `test/output/` 下对应子目录。
 
 ## 配置
 
@@ -133,7 +175,8 @@ src/
 │   └── executors/
 │       ├── image.py         # ComfyUI 图像生成
 │       ├── llm.py           # LLM 生成 (普通 + 流式)
-│       └── tts.py           # TTS 生成
+│       ├── tts.py           # TTS 语音生成（支持 generate_subtitle）
+│       └── subtitle.py      # 字幕生成（文件上传）
 └── logic/
     ├── logger.py            # 日志
     ├── yaml_config_loader.py # YAML 配置加载

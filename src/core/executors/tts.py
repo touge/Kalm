@@ -3,7 +3,7 @@
 TTS 任务执行器
 ==============
 纯透传模式：接收前端 payload → 提交到 TTS 后端 → 轮询状态 → 原样透传结果。
-文件访问由前端自行通过 /file 端点完成。
+支持 generate_subtitle: True 同步生成字幕，产物通过 /static/{task_id}/{filename} 下载。
 """
 
 import requests
@@ -23,6 +23,9 @@ def execute(task_id: str, **payload):
 
     payload 期望字段:
       - path: str — 后端生成接口路径，如 "/v1.5/generate"
+      - text: str — 要合成的文本
+      - speaker: str — 音色名称
+      - generate_subtitle: bool (可选) — 是否同步生成 SRT 字幕
       - 其余字段原样 POST 给后端
     """
     path = payload.pop("path", "/v1.5/generate")
