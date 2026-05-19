@@ -15,6 +15,7 @@ import threading
 import queue
 import time
 import importlib
+import requests
 from typing import Dict, Any, Optional
 
 from src.logic.logger import log
@@ -107,8 +108,9 @@ class TaskScheduler:
                     task = self.task_queue.get(timeout=timeout)
                 except queue.Empty:
                     if self.current_service_name:
-                        log.info(f"[Scheduler] Service '{self.current_service_name}' idle for {self.idle_timeout}s, stopping.")
-                        self._stop_current_service()
+                        if not service_controller.is_auto_start(self.current_service_name):
+                            log.info(f"[Scheduler] Service '{self.current_service_name}' idle for {self.idle_timeout}s, stopping.")
+                            self._stop_current_service()
                     continue
 
                 if task is None:
@@ -142,13 +144,18 @@ class TaskScheduler:
                 self.task_queue.task_done()
 
                 # 标记产出并等待客户端下载完成，才处理下一个任务
-                if required_service:
+                # auto_start 常驻服务无需等待下载，服务不会关闭
+                if required_service and not service_controller.is_auto_start(required_service):
                     task_info = TaskManager.get_task(task_id)
                     if task_info and task_info.get("status") == TaskManager.STATUS_FAILED:
                         log.info(f"[Scheduler] Task {task_id} failed, skipping download wait.")
                     else:
                         service_controller.mark_has_outputs(required_service)
                         service_controller._wait_downloads(required_service, timeout=self.download_idle_timeout)
+
+                # 智能释放：同类型下一个任务跳过释放，不同类型或队列为空则释放
+                if required_service:
+                    self._maybe_free_resources(required_service, task_type)
 
             except Exception as e:
                 log.error(f"[Scheduler] Critical error in scheduler loop: {e}", exc_info=True)
@@ -168,6 +175,9 @@ class TaskScheduler:
     def _stop_current_service(self):
         if not self.current_service_name:
             return
+        if service_controller.is_auto_start(self.current_service_name):
+            self.current_service_name = None
+            return
         log.info(f"[Scheduler] Stopping service '{self.current_service_name}'...")
         try:
             service_controller.stop(self.current_service_name)
@@ -175,6 +185,40 @@ class TaskScheduler:
             log.error(f"[Scheduler] Error stopping service '{self.current_service_name}': {e}")
         finally:
             self.current_service_name = None
+
+    def _peek_next_task_type(self) -> str | None:
+        """查看队列中下一个任务的类型（不取出），用于决策是否释放资源。"""
+        if self.task_queue.empty():
+            return None
+        return self.task_queue.queue[0]["type"]
+
+    def _maybe_free_resources(self, service_name: str, current_task_type: str):
+        """
+        根据队列中下一个任务类型决定是否释放当前服务资源。
+        下一个任务是同类型 → 跳过释放，模型常驻，避免重复加载。
+        下一个任务是不同类型或队列为空 → 释放资源。
+        """
+        next_type = self._peek_next_task_type()
+        if next_type == current_task_type:
+            log.info(f"[Scheduler] Next task is same type ({current_task_type}), skipping free.")
+            return
+        log.info(f"[Scheduler] Next task '{next_type}' != current '{current_task_type}', freeing resources...")
+        self._free_service_resources(service_name)
+
+    def _free_service_resources(self, service_name: str):
+        """调用后端服务的资源释放接口。目前支持 ComfyUI 的 /api/free。"""
+        service_url = service_controller.get_service_url(service_name)
+        if not service_url:
+            return
+        free_url = f"{service_url}/api/free"
+        try:
+            resp = requests.post(free_url, json={"unload_models": True, "free_memory": True}, timeout=10)
+            if resp.status_code == 200:
+                log.success(f"[Scheduler] Freed resources for {service_name}")
+            else:
+                log.warning(f"[Scheduler] Free returned {resp.status_code}: {resp.text[:100]}")
+        except Exception as e:
+            log.warning(f"[Scheduler] Free failed (non-critical): {e}")
 
     def _execute_task_logic(self, task_type: str, task_id: str, payload: Dict[str, Any],
                             output_queue=None):

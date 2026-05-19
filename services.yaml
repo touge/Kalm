@@ -1,5 +1,16 @@
-# ============================================================================
 # Kalm 后端子进程服务定义
+# ============================================================================
+# 字段说明：
+#   type             : 启动方式 — "cmd" 直接运行命令 / "ps1" 执行 PowerShell 脚本
+#   host             : 服务监听地址（默认 127.0.0.1，仅本地可访问）
+#   port             : 服务监听端口（需与后端实际端口一致）
+#   ready_keyword    : 启动完成标志 — 匹配 stdout 中的关键词，出现后认为服务就绪
+#   manage_lifecycle : true = Kalm 管理该服务的启停 / false = 外部管理，Kalm 不干预
+#   auto_start       : true = 系统启动时自动启动该服务，且不调用 manage_lifecycle 停止逻辑
+#                      false = 走正常的 manage_lifecycle 流程（与 manage_lifecycle 互斥）
+#   stop_command     : (仅 cmd 类型) 自定义停止命令，用于优雅关闭而非直接 kill 进程
+#   token            : (可选) API 鉴权 token，Kalm 转发请求时会附带
+#   env              : (可选) 子进程环境变量，格式为 KEY: "value"
 # ============================================================================
 
 Ollama:
@@ -9,6 +20,7 @@ Ollama:
   port: 11434
   ready_keyword: "Listening"
   stop_command: 'powershell -Command "Invoke-RestMethod -Uri http://127.0.0.1:11434/api/generate -Method Post -ContentType ''application/json'' -Body ''{\"model\": \"gemma3:12b\", \"prompt\": \"unload\", \"keep_alive\": \"0s\"}'' -ErrorAction SilentlyContinue"'
+  auto_start: false
   manage_lifecycle: true
 
 ComfyUI:
@@ -17,13 +29,15 @@ ComfyUI:
   host: "http://127.0.0.1"
   port: 7001
   ready_keyword: "To see the GUI go to"
+  auto_start: true
   manage_lifecycle: true
 
 TTS:
   type: ps1
   path: "D:/AIGC/Background_Tasks/IndexTTS-API/P8001.ps1"
   host: "http://127.0.0.1"
-  port: 8001
+  port: 7002
   token: "123456"
   ready_keyword: "started"
+  auto_start: true
   manage_lifecycle: true
