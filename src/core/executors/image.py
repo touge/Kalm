@@ -112,7 +112,7 @@ class _ComfyUIClient:
         ws.settimeout(30)
         try:
             last_msg_time = time.time()
-            max_idle_seconds = 300  # 5 分钟无新消息视为超时
+            max_idle_seconds = 60  # 1 分钟无新消息视为超时
             while True:
                 try:
                     msg = ws.recv()
@@ -125,8 +125,11 @@ class _ComfyUIClient:
                 last_msg_time = time.time()
                 data = json.loads(msg)
                 msg_type = data.get("type", "")
-                if msg_type in ("executing", "progress", "execution_start", "execution_cached", "execution_error"):
+                if msg_type in ("executing", "progress", "execution_start", "execution_cached"):
                     message_callback(data)
+                if msg_type == "execution_error":
+                    message_callback(data)
+                    raise RuntimeError(f"ComfyUI execution error: {json.dumps(data.get('data', {}))}")
                 if msg_type == "executed" and data.get("data", {}).get("prompt_id") == prompt_id:
                     break
         finally:

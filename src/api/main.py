@@ -17,7 +17,7 @@ from src.logic.task_cleanup import start_cleanup_thread
 from src.core.scheduler import scheduler
 from src.core.ws_manager import ws_manager
 from src.logic.logger import log
-from src.api.routes import system, tasks, llm, file_proxy, ws_proxy, stream_proxy
+from src.api.routes import system, tasks, llm, file_proxy, ws_proxy, stream_proxy, queue_ws
 
 
 @asynccontextmanager
@@ -56,6 +56,7 @@ def create_app() -> FastAPI:
     app.include_router(llm.router, prefix="/interface")
     app.include_router(ws_proxy.router, prefix="/interface")
     app.include_router(stream_proxy.router, prefix="/interface")
+    app.include_router(queue_ws.router, prefix="/interface")
     app.include_router(file_proxy.router)
 
     return app

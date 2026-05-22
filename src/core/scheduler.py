@@ -21,6 +21,7 @@ from typing import Dict, Any, Optional
 from src.logic.logger import log
 from src.core.service_controller import service_controller
 from src.core.task_manager import TaskManager
+from src.core.ws_manager import ws_manager
 from src.logic.yaml_config_loader import yaml_config_loader
 
 DEFAULT_SERVICE_IDLE_TIMEOUT = 3
@@ -57,10 +58,14 @@ class TaskScheduler:
 
         self.task_service_map: Dict[str, Optional[str]] = {}
         self.task_executors: Dict[str, callable] = {}
+        self.task_track_modes: Dict[str, str] = {}
 
         for task_type, task_config in tasks_config.items():
             service_name = task_config.get("service")
             self.task_service_map[task_type] = service_name
+
+            track_mode = task_config.get("track_mode", "poll")
+            self.task_track_modes[task_type] = track_mode
 
             executor_config = task_config.get("executor", {})
             module_path = executor_config.get("module")
@@ -92,12 +97,21 @@ class TaskScheduler:
 
     def submit_task(self, task_type: str, task_id: str, payload: Dict[str, Any],
                     output_queue=None, started_event=None):
+        track_mode = self.task_track_modes.get(task_type, "poll")
         task_item = {
             "type": task_type, "id": task_id, "payload": payload,
             "output_queue": output_queue, "started_event": started_event,
+            "track_mode": track_mode,
         }
         self.task_queue.put(task_item)
         log.info(f"[Scheduler] Task {task_id} ({task_type}) enqueued. Queue size: {self.task_queue.qsize()}")
+        # 广播入队通知
+        ws_manager.broadcast_queue({
+            "type": "task_enqueued",
+            "task_id": task_id,
+            "task_type": task_type,
+            "track_mode": track_mode,
+        })
 
     def _scheduler_loop(self):
         while self.is_running:
@@ -128,6 +142,15 @@ class TaskScheduler:
                 if started_event:
                     started_event.set()
 
+                # 广播任务开始
+                track_mode = task.get("track_mode", self.task_track_modes.get(task_type, "poll"))
+                ws_manager.broadcast_queue({
+                    "type": "task_started",
+                    "task_id": task_id,
+                    "task_type": task_type,
+                    "track_mode": track_mode,
+                })
+
                 # 服务管理
                 required_service = self.task_service_map.get(task_type)
                 if required_service:
@@ -142,6 +165,22 @@ class TaskScheduler:
                 # 执行任务
                 self._execute_task_logic(task_type, task_id, payload, output_queue)
                 self.task_queue.task_done()
+
+                # 广播任务完成（含下一任务信息）
+                next_type = self._peek_next_task_type()
+                next_info = {
+                    "type": "task_completed",
+                    "task_id": task_id,
+                    "next_task_id": None,
+                    "next_task_type": None,
+                    "next_track_mode": None,
+                }
+                if next_type:
+                    peek = self.task_queue.queue[0]
+                    next_info["next_task_id"] = peek["id"]
+                    next_info["next_task_type"] = next_type
+                    next_info["next_track_mode"] = peek.get("track_mode", self.task_track_modes.get(next_type, "poll"))
+                ws_manager.broadcast_queue(next_info)
 
                 # 标记产出并等待客户端下载完成，才处理下一个任务
                 # auto_start 常驻服务无需等待下载，服务不会关闭

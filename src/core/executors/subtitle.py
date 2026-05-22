@@ -12,6 +12,7 @@ import requests
 
 from src.core.service_controller import service_controller
 from src.core.task_manager import TaskManager
+from src.core.ws_manager import ws_manager
 from src.logic.logger import log
 
 RESOURCE_NAME = "TTS"
@@ -100,14 +101,17 @@ def execute(task_id: str, **payload):
                 svc_status = status_data.get("status")
 
                 TaskManager.update_task(task_id, TaskManager.STATUS_RUNNING, result=status_data)
+                ws_manager.send(task_id, status_data)
 
                 if svc_status == "failed":
                     TaskManager.update_task(task_id, TaskManager.STATUS_FAILED, result=status_data)
+                    ws_manager.send(task_id, {"type": "task_failed", **status_data})
                     return
 
                 if svc_status == "completed":
                     log.info(f"[Subtitle Executor] Task {task_id} completed.")
                     TaskManager.update_task(task_id, TaskManager.STATUS_SUCCESS, result=status_data)
+                    ws_manager.send(task_id, {"type": "task_complete", "status": "success", "result": status_data})
                     return
 
             except requests.RequestException as e:

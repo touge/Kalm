@@ -12,6 +12,7 @@ Kalm 是纯 AI 任务中转控制站。前端 ↔ Kalm ↔ 后端服务（ComfyU
 POST /interface/tasks/submit      → scheduler (FIFO 队列) → executor → 后端服务
 GET  /interface/tasks/{id}/status → TaskManager (内存状态)
 WS   /interface/tasks/{id}/ws     → ws_manager (实时推送，ComfyUI 原生 WS 协议)
+WS   /interface/queue/ws          → ws_manager 队列广播 (任务生命周期通知)
 POST /interface/llm/generate-stream → 排队 → StreamingResponse (NDJSON 透传)
 GET  /file/{service}/{path}      → httpx → 后端 → 流式返回前端
 ```
@@ -22,8 +23,9 @@ GET  /file/{service}/{path}      → httpx → 后端 → 流式返回前端
 - 任务提交支持 JSON 和 multipart/form-data 两种 Content-Type（字幕任务需文件上传）。
 - 服务管理：`src/core/service_controller.py`，引用计数 + 子进程启停。服务名大小写不敏感。支持 `auto_start` 常驻模式（Kalm 启动时自动拉起，常驻不回收）和启动时端口强杀。
 - 任务状态：`src/core/task_manager.py`，内存字典 + threading.Lock + TTL 自动清理。
-- WS 管理：`src/core/ws_manager.py`，桥接同步执行器线程 → 异步 WS 推送（`run_coroutine_threadsafe`）。
-- WS 端点：`src/api/routes/ws_proxy.py`，前端连 `/tasks/{id}/ws` 获取实时进度。内部有兜底轮询，不依赖特定后端协议的 WS 也能检测完成。
+- WS 管理：`src/core/ws_manager.py`，桥接同步执行器线程 → 异步 WS 推送（`run_coroutine_threadsafe`）。支持 per-task 推送和全局队列广播（`broadcast_queue()`）。
+- WS 端点：`src/api/routes/ws_proxy.py`，前端连 `/tasks/{id}/ws` 获取实时进度。内部有兜底轮询（`poll_fallback`，每 2 秒检查 TaskManager），不依赖特定后端协议的 WS 也能检测完成。
+- 队列广播端点：`src/api/routes/queue_ws.py`，前端连 `/queue/ws` 接收任务生命周期通知（`task_enqueued` / `task_started` / `task_completed`）。所有连接客户端收到相同广播，按 `task_id` 自行过滤。
 - 流式端点：`src/api/routes/stream_proxy.py`，前端 POST `/llm/generate-stream` 获取 NDJSON 流式响应。
 
 ## 协议透传原则
@@ -69,6 +71,30 @@ GET  /file/{service}/{path}      → httpx → 后端 → 流式返回前端
 只有 `services.yaml` 中配置了 `free_api` 的服务才会被调用释放接口（目前仅 ComfyUI）。TTS、Ollama 等未配置，自动跳过。
 
 `auto_start` 仅保证服务**进程**常驻不回收，模型仍可能被 `free_api` 释放。两者独立。
+
+## 队列 WS 广播机制
+
+调度器在三个关键节点通过 `ws_manager.broadcast_queue()` 广播任务生命周期事件：
+
+| 触发点 | 消息类型 | 携带数据 |
+|---|---|---|
+| `submit_task()` 入队后 | `task_enqueued` | task_id, task_type, track_mode |
+| `_scheduler_loop` 取到任务 | `task_started` | task_id, task_type, track_mode |
+| `_scheduler_loop` 执行完毕 | `task_completed` | task_id, next_task_id/type/track_mode |
+
+**客户端行为**：
+- 连上 `/interface/queue/ws` 后收到所有广播，按 `task_id` 过滤自己的任务
+- `task_started` 后，ws 和 poll 模式统一连接 `/tasks/{id}/ws` 获取执行进度
+- `task_completed` 后 GET `/tasks/{id}/status` 拉取最终结果
+
+**任务 WS 双保险**：
+- 主线：executor 通过 `ws_manager.send()` 实时推送进度
+- 兜底：`ws_proxy.poll_fallback` 每 2 秒轮询 TaskManager，完成时补发通知
+- 主线推送失败不影响最终结果，兜底最多 2 秒延迟
+
+**心跳保活**：客户端每 30 秒发 `ping`，Kalm 回 `pong`，防止中间网络层断开空闲连接。
+
+详细接口文档：`docs/Kalm-队列WebSocket通知接口文档.md`
 
 ## 测试脚本
 

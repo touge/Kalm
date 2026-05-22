@@ -32,7 +32,9 @@ class WebSocketManager:
             return
         self._connections: Dict[str, WebSocket] = {}
         self._events: Dict[str, asyncio.Event] = {}
+        self._queue_subscribers: Dict[str, WebSocket] = {}  # 队列广播订阅者
         self._lock = threading.Lock()
+        self._queue_lock = threading.Lock()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._initialized = True
 
@@ -100,6 +102,59 @@ class WebSocketManager:
             task_ids = list(self._connections.keys())
         for task_id in task_ids:
             self.unregister(task_id)
+        with self._queue_lock:
+            subs = list(self._queue_subscribers.keys())
+        for sub_id in subs:
+            self.unsubscribe_queue(sub_id)
+
+    # =========================================================================
+    # 队列广播（全局通知频道）
+    # =========================================================================
+
+    def subscribe_queue(self, ws_id: str, websocket: WebSocket):
+        """订阅队列广播。ws_id 为连接标识，用于取消订阅。"""
+        with self._queue_lock:
+            self._queue_subscribers[ws_id] = websocket
+        log.info(f"[WSManager] Queue subscriber '{ws_id}' connected ({len(self._queue_subscribers)} total)")
+
+    def unsubscribe_queue(self, ws_id: str):
+        """取消队列广播订阅。"""
+        ws = None
+        with self._queue_lock:
+            ws = self._queue_subscribers.pop(ws_id, None)
+        if ws and self._loop:
+            asyncio.run_coroutine_threadsafe(self._close_queue_ws(ws_id, ws), self._loop)
+
+    async def _close_queue_ws(self, ws_id: str, ws: WebSocket):
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+    def broadcast_queue(self, message: dict):
+        """从同步线程向所有队列订阅者广播消息。"""
+        if not self._loop:
+            return
+        # 快照订阅者列表（锁内），发送在锁外，避免阻塞
+        with self._queue_lock:
+            snapshot = list(self._queue_subscribers.items())
+        dead_ids = []
+        for ws_id, ws in snapshot:
+            future = asyncio.run_coroutine_threadsafe(
+                self._send_queue_async(ws_id, ws, message), self._loop
+            )
+            try:
+                future.result(timeout=2)
+            except Exception:
+                dead_ids.append(ws_id)
+        for ws_id in dead_ids:
+            self.unsubscribe_queue(ws_id)
+
+    async def _send_queue_async(self, ws_id: str, ws: WebSocket, message: dict):
+        try:
+            await ws.send_json(message)
+        except Exception:
+            pass  # 连接已断，由 broadcast_queue 统一清理
 
 
 ws_manager = WebSocketManager()

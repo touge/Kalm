@@ -34,6 +34,7 @@ ComfyUI:
   ready_keyword: "To see the GUI go to"
   auto_start: true
   manage_lifecycle: true
+  startup_timeout: 300
   free_api:
     path: "/api/free"
     body:

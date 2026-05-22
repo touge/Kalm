@@ -13,13 +13,13 @@ python main.py
 
 服务默认运行在 `http://localhost:7000`。
 
-## 三种代理模式
+## 四种代理通知模式
 
 | 模式 | 端点 | 适用任务 | 说明 |
 |------|------|---------|------|
-| HTTP 轮询 | `POST /interface/tasks/submit` + `GET /interface/tasks/{id}/status` | `comfyui` `llm` `tts` `subtitle` | 提交返回 task_id，轮询拿结果 |
-| multipart 上传 | `POST /interface/tasks/submit` (multipart/form-data) | `subtitle` | 上传音频文件 + 文稿，轮询拿 SRT |
-| WebSocket | `GET /interface/tasks/{id}/ws` | `comfyui` 实时进度 | 透传 ComfyUI 原生 WS 协议 |
+| 队列广播 | `WS /interface/queue/ws` | 所有任务 | 全局广播：入队/开始/完成通知 |
+| 任务 WS | `WS /interface/tasks/{id}/ws` | 所有任务 | 实时进度（ws 透传 / poll 转发） |
+| multipart 上传 | `POST /interface/tasks/submit` (multipart/form-data) | `subtitle` | 上传音频文件 + 文稿 |
 | HTTP 流式 | `POST /interface/llm/generate-stream` | `llm_streaming` | NDJSON 逐 token 推送 |
 
 ## API 端点
@@ -53,17 +53,41 @@ Content-Type: application/json
 GET /interface/tasks/{task_id}/status
 ```
 
-### WebSocket 进度
+### 队列广播 WebSocket（推荐）
+
+**一次连接，全程通知，无需轮询。**
+
+```
+ws://localhost:7000/interface/queue/ws
+```
+
+收到三种消息：`task_enqueued`（入队）、`task_started`（开始执行）、`task_completed`（完成，含下一任务信息）。客户端按 `task_id` 过滤自己的任务。
 
 ```javascript
-const ws = new WebSocket(`ws://localhost:7000/interface/tasks/${taskId}/ws`);
-ws.onmessage = (e) => {
+const queueWs = new WebSocket("ws://localhost:7000/interface/queue/ws");
+queueWs.onmessage = (e) => {
   const msg = JSON.parse(e.data);
-  // msg.type: "executing" | "progress" | "task_complete" | "task_failed"
+  if (msg.task_id !== myTaskId) return; // 不是我的，忽略
+  // msg.type: "task_enqueued" | "task_started" | "task_completed"
+};
+// 每 30 秒发 ping 保活
+setInterval(() => { queueWs.send("ping"); }, 30000);
+```
+
+### 任务 WebSocket 进度
+
+ws 和 poll 模式统一：收到 `task_started` 后连接任务 WS 获取实时进度。
+
+```javascript
+const taskWs = new WebSocket(`ws://localhost:7000/interface/tasks/${taskId}/ws`);
+taskWs.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
+  // ws 模式(ComfyUI): 透传原生协议 {type: "executing", ...}
+  // poll 模式(TTS): Kalm 轮询转发的进度 {status: "running", ...}
 };
 ```
 
-与 ComfyUI 原生 WebSocket 协议一致，逐消息透传。
+> 详细说明见 `docs/Kalm-队列WebSocket通知接口文档.md`
 
 ### LLM 流式生成
 
@@ -182,15 +206,16 @@ src/
 │   ├── main.py              # FastAPI 应用工厂 + 生命周期
 │   └── routes/
 │       ├── tasks.py         # 任务提交 + 状态查询
-│       ├── ws_proxy.py      # WebSocket 进度透传
+│       ├── ws_proxy.py      # WebSocket 进度透传（含兜底轮询）
+│       ├── queue_ws.py      # 队列广播 WebSocket
 │       ├── stream_proxy.py  # HTTP 流式透传 (NDJSON)
 │       ├── llm.py           # LLM 端点 (模型列表/普通生成)
 │       ├── file_proxy.py    # 通用文件代理
 │       └── system.py        # 健康检查
 ├── core/
-│   ├── scheduler.py         # FIFO 队列调度器
+│   ├── scheduler.py         # FIFO 队列调度器 + 智能资源释放
 │   ├── task_manager.py      # 内存任务状态存储
-│   ├── ws_manager.py        # WebSocket 连接管理
+│   ├── ws_manager.py        # WS 连接管理 (per-task + 队列广播)
 │   ├── service_controller.py # 后端服务生命周期管理
 │   ├── response.py          # API 响应辅助
 │   ├── security.py          # Token 认证
