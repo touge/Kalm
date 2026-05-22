@@ -206,13 +206,22 @@ class TaskScheduler:
         self._free_service_resources(service_name)
 
     def _free_service_resources(self, service_name: str):
-        """调用后端服务的资源释放接口。目前支持 ComfyUI 的 /api/free。"""
+        """调用后端服务的资源释放接口。由 services.yaml 中的 free_api 配置驱动。"""
+        svc_config = service_controller.get_service_config(service_name)
+        if not svc_config:
+            return
+        free_api = svc_config.get("free_api")
+        if not free_api:
+            log.info(f"[Scheduler] Service '{service_name}' has no free_api configured, skipping resource release.")
+            return
+
         service_url = service_controller.get_service_url(service_name)
         if not service_url:
             return
-        free_url = f"{service_url}/api/free"
+        free_url = f"{service_url}{free_api['path']}"
+        body = free_api.get("body", {})
         try:
-            resp = requests.post(free_url, json={"unload_models": True, "free_memory": True}, timeout=10)
+            resp = requests.post(free_url, json=body, timeout=10)
             if resp.status_code == 200:
                 log.success(f"[Scheduler] Freed resources for {service_name}")
             else:

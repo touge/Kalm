@@ -11,6 +11,9 @@
 #   stop_command     : (仅 cmd 类型) 自定义停止命令，用于优雅关闭而非直接 kill 进程
 #   token            : (可选) API 鉴权 token，Kalm 转发请求时会附带
 #   env              : (可选) 子进程环境变量，格式为 KEY: "value"
+#   free_api         : (可选) 资源释放接口配置，无此配置则跳过释放
+#     path            : 释放接口路径（如 /api/free），会拼接在 host:port 之后
+#     body            : POST 请求体（JSON），具体字段由后端服务决定
 # ============================================================================
 
 Ollama:
@@ -31,6 +34,11 @@ ComfyUI:
   ready_keyword: "To see the GUI go to"
   auto_start: true
   manage_lifecycle: true
+  free_api:
+    path: "/api/free"
+    body:
+      unload_models: true
+      free_memory: true
 
 TTS:
   type: ps1

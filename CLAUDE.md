@@ -16,7 +16,7 @@ POST /interface/llm/generate-stream → 排队 → StreamingResponse (NDJSON 透
 GET  /file/{service}/{path}      → httpx → 后端 → 流式返回前端
 ```
 
-- 调度器：`src/core/scheduler.py`，单例单线程，`queue.Queue` + 服务生命周期。支持普通任务和流式任务（带 `output_queue`/`started_event`）。支持智能资源释放：连续同类型任务跳过显存释放，不同类型或队列为空时主动释放。
+- 调度器：`src/core/scheduler.py`，单例单线程，`queue.Queue` + 服务生命周期。支持普通任务和流式任务（带 `output_queue`/`started_event`）。支持智能资源释放（详见下方"资源释放策略"）。
 - 执行器：`src/core/executors/*.py`，每个只做 提交→透传。普通执行器签名 `def execute(task_id, **payload)`，流式执行器签名 `def execute_stream(task_id, output_queue, **payload)`。
 - 文件代理：`src/api/routes/file_proxy.py`，通用端点，按 service_name 动态查后端地址。使用 requests 库同步拉取 + ThreadPoolExecutor。
 - 任务提交支持 JSON 和 multipart/form-data 两种 Content-Type（字幕任务需文件上传）。
@@ -52,7 +52,23 @@ GET  /file/{service}/{path}      → httpx → 后端 → 流式返回前端
 ## 配置
 
 - `config.yaml` — API、任务映射、LLM 本地模型
-- `services.yaml` — 后端子进程定义。新增 `auto_start` 字段（true=Kalm 启动时自动拉起并常驻），与 `manage_lifecycle` 互斥。`startup_timeout` 自定义启动超时。
+- `services.yaml` — 后端子进程定义。新增 `auto_start` 字段（true=Kalm 启动时自动拉起并常驻），与 `manage_lifecycle` 互斥。`startup_timeout` 自定义启动超时。新增 `free_api` 字段（可选）定义资源释放接口，未配置的服务跳过释放。
+
+## 资源释放策略
+
+调度器在**每个任务完成后**决策是否释放后端服务的 GPU 资源（调用 `services.yaml` 中配置的 `free_api` 接口）。决策逻辑：
+
+| 下一任务类型 | 行为 | 说明 |
+|---|---|---|
+| 同类型（已在队列中） | 跳过释放 | 模型常驻，避免重复加载 |
+| 不同类型 | 释放 | 切换服务前释放旧模型 |
+| 队列为空（暂无下一任务） | 释放 | 确认无后续任务，回收显存 |
+
+**关键限制**：释放决策基于队列中**已入队**的任务。如果下游串行提交（等上一个完成才提交下一个），上一个完成时队列为空，必然触发释放 → 重载。要利用"同类型跳过释放"特性，必须**批量提交，让任务在队列中排队**。
+
+只有 `services.yaml` 中配置了 `free_api` 的服务才会被调用释放接口（目前仅 ComfyUI）。TTS、Ollama 等未配置，自动跳过。
+
+`auto_start` 仅保证服务**进程**常驻不回收，模型仍可能被 `free_api` 释放。两者独立。
 
 ## 测试脚本
 
