@@ -1,7 +1,7 @@
 # Kalm 后端子进程服务定义
 # ============================================================================
 # 字段说明：
-#   type             : 启动方式 — "cmd" 直接运行命令 / "ps1" 执行 PowerShell 脚本
+#   type             : 启动方式 — "cmd" 直接运行命令 / "ps1" 执行 PowerShell 脚本 / "sh" 执行 Linux bash 脚本
 #   host             : 服务监听地址（默认 127.0.0.1，仅本地可访问）
 #   port             : 服务监听端口（需与后端实际端口一致）
 #   ready_keyword    : 启动完成标志 — 匹配 stdout 中的关键词，出现后认为服务就绪
@@ -16,6 +16,10 @@
 #     body            : POST 请求体（JSON），具体字段由后端服务决定
 # ============================================================================
 
+# ============================================================================
+# Ollama 服务（跨平台，使用直接命令启动）
+# ============================================================================
+
 Ollama:
   type: cmd
   command: "ollama serve"
@@ -26,7 +30,11 @@ Ollama:
   auto_start: false
   manage_lifecycle: true
 
-ComfyUI:
+# ============================================================================
+# ComfyUI 服务 — Windows 平台（PowerShell 脚本）
+# ============================================================================
+
+ComfyUI_Windows:
   type: ps1
   path: "D:/AIGC/ComfyUI/run.ps1"
   host: "http://127.0.0.1"
@@ -41,7 +49,34 @@ ComfyUI:
       unload_models: true
       free_memory: true
 
-TTS:
+# ============================================================================
+# ComfyUI 服务 — Linux 平台（bash 脚本）
+# 注意：Linux 端的 start.sh 脚本需要支持 --port 参数解析
+# ============================================================================
+
+ComfyUI_Linux:
+  type: sh
+  path: "/opt/ComfyUI/start.sh"
+  host: "http://127.0.0.1"
+  port: 8189
+  ready_keyword: "To see the GUI go to"
+  auto_start: false
+  manage_lifecycle: true
+  startup_timeout: 300
+  free_api:
+    path: "/api/free"
+    body:
+      unload_models: true
+      free_memory: true
+  env:
+    CUDA_VISIBLE_DEVICES: "0"
+    PYTHONUNBUFFERED: "1"
+
+# ============================================================================
+# TTS 服务 — Windows 平台（PowerShell 脚本）
+# ============================================================================
+
+TTS_Windows:
   type: ps1
   path: "D:/AIGC/Background_Tasks/IndexTTS-API/P8001.ps1"
   host: "http://127.0.0.1"
@@ -50,3 +85,19 @@ TTS:
   ready_keyword: "started"
   auto_start: true
   manage_lifecycle: true
+
+# ============================================================================
+# TTS 服务 — Linux 平台（bash 脚本）
+# ============================================================================
+
+TTS_Linux:
+  type: sh
+  path: "/opt/IndexTTS-API/start.sh"
+  host: "http://127.0.0.1"
+  port: 8001
+  token: "123456"
+  ready_keyword: "started"
+  auto_start: false
+  manage_lifecycle: true
+  env:
+    CUDA_VISIBLE_DEVICES: "0"

@@ -247,6 +247,10 @@ class _ServiceController:
             # PowerShell 脚本方式：传 -Port 参数
             ps1_path = str(Path(svc["path"]))
             cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File", ps1_path, "-Port", str(port)]
+        elif svc["type"] == "sh":
+            # Linux bash 脚本方式：传 --port 参数
+            sh_path = str(svc["path"])
+            cmd = ["bash", sh_path, "--port", str(port)]
         elif svc["type"] == "cmd":
             # 直接命令方式
             cmd = ["powershell", "-Command", svc["command"]]
@@ -254,8 +258,13 @@ class _ServiceController:
             log.error(f"Unknown service type: {svc['type']}")
             return None
 
+        # 合并配置文件中的环境变量
         env = os.environ.copy()
         env['PYTHONUTF8'] = '1'  # 确保子进程输出 UTF-8
+        # 支持配置中定义的自定义环境变量
+        if "env" in svc and isinstance(svc["env"], dict):
+            for env_key, env_value in svc["env"].items():
+                env[str(env_key)] = str(env_value)
 
         proc = subprocess.Popen(
             cmd,
