@@ -72,6 +72,13 @@ class WebSocketAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
+        # 非 Kalm 端点（如平台监控探活 /ws），静默关闭不触发认证
+        if scope["path"] not in ("/interface/queue/ws",) and not scope["path"].startswith("/interface/tasks/"):
+            ws = WebSocket(scope, receive=receive, send=send)
+            await ws.accept()
+            await ws.close(code=1000)
+            return
+
         ws = WebSocket(scope, receive=receive, send=send)
         if not self._verify_ws_token(ws):
             await ws.accept()

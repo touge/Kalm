@@ -27,6 +27,7 @@ GET  /file/{service}/{path}      → httpx → 后端 → 流式返回前端
 - WS 端点：`src/api/routes/ws_proxy.py`，前端连 `/tasks/{id}/ws` 获取实时进度。内部有兜底轮询（`poll_fallback`，每 2 秒检查 TaskManager），不依赖特定后端协议的 WS 也能检测完成。
 - 队列广播端点：`src/api/routes/queue_ws.py`，前端连 `/queue/ws` 接收任务生命周期通知（`task_enqueued` / `task_started` / `task_completed`）。所有连接客户端收到相同广播，按 `task_id` 自行过滤。
 - 流式端点：`src/api/routes/stream_proxy.py`，前端 POST `/llm/generate-stream` 获取 NDJSON 流式响应。
+- 平台伪装：`src/api/main.py` 中 `/api/jobs` 返回空任务列表，安抚部署平台的监控探活，避免 404 刷屏。
 
 ## 安全认证
 
@@ -35,7 +36,7 @@ GET  /file/{service}/{path}      → httpx → 后端 → 流式返回前端
 | 层 | 机制 | 适用范围 |
 |---|---|---|
 | HTTP 依赖 | `require_token` + `OptionalHTTPBearer` + `Security()` | 所有 HTTP 路由，Swagger UI 自动显示 Authorize 按钮 |
-| WS 中间件 | `WebSocketAuthMiddleware` | 所有 WebSocket 连接，支持 `Authorization: Bearer` 和 `x-token` 两种 Header |
+| WS 中间件 | `WebSocketAuthMiddleware` | 仅 Kalm 路径（`/interface/queue/ws`、`/interface/tasks/*`）需认证，其他 WS 路径（如平台探活 `/ws`）直接关闭码 1000，不触发认证 |
 
 `OptionalHTTPBearer` 是 `HTTPBearer` 的子类，`request` 参数可选：WebSocket 路由无 `Request` 对象时走默认值 `None` 跳过 HTTP 认证层，交由中间件处理。
 

@@ -48,7 +48,16 @@ def create_app() -> FastAPI:
         dependencies=[Depends(require_token)],  # 全局认证依赖 — docs 页面会自动显示 Authorize 按钮
     )
 
-    # 添加 WebSocket 认证中间件（WebSocket 不支持 Depends，只能用中间件）
+    # ---- 平台监控伪装路由（安抚探活机器人，避免 404/401 刷屏）----
+    @app.get("/api/jobs")
+    async def fake_jobs(status: str = None, limit: int = 200, offset: int = 0):
+        """伪装 /api/jobs，返回空任务列表。"""
+        from fastapi.responses import JSONResponse
+        return JSONResponse({
+            "rows": [], "total": 0, "page": 1, "limit": limit, "offset": offset,
+        })
+
+    # ---- WebSocket 认证中间件 ----
     app.add_middleware(WebSocketAuthMiddleware)
 
     # 静态文件挂载（任务产物目录）
