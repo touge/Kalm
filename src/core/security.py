@@ -16,6 +16,21 @@ from starlette.responses import JSONResponse
 from src.logic.yaml_config_loader import yaml_config_loader
 
 
+# 不需要认证的路径前缀
+PUBLIC_PATHS = [
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+    "/favicon.ico",
+    "/openapi",
+]
+
+
+def _is_public_path(path: str) -> bool:
+    """检查路径是否为公开路径（跳过认证）"""
+    return any(path.startswith(p) for p in PUBLIC_PATHS)
+
+
 class TokenAuthMiddleware:
     """同时支持 HTTP 和 WebSocket 的 Token 认证中间件"""
 
@@ -25,17 +40,18 @@ class TokenAuthMiddleware:
     async def __call__(self, scope, receive, send):
         from starlette.requests import Request
         from starlette.websockets import WebSocket as StarletteWebSocket
-        from starlette.routing import NoMatchFound
 
         if scope["type"] == "http":
             request = Request(scope)
-            if not self._verify_http_token(request):
-                response = JSONResponse(
-                    status_code=401,
-                    content={"detail": "Missing or invalid authentication token"},
-                )
-                await response(scope, receive, send)
-                return
+            # 公开路径跳过认证
+            if not _is_public_path(request.url.path):
+                if not self._verify_http_token(request):
+                    response = JSONResponse(
+                        status_code=401,
+                        content={"detail": "Missing or invalid authentication token"},
+                    )
+                    await response(scope, receive, send)
+                    return
         elif scope["type"] == "websocket":
             ws = StarletteWebSocket(scope)
             if not self._verify_ws_token(ws):
