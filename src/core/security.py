@@ -20,7 +20,7 @@ from starlette.responses import JSONResponse
 from src.logic.yaml_config_loader import yaml_config_loader
 
 # FastAPI 原生的 Bearer token 提取器
-security_scheme = HTTPBearer(name="Bearer Token", description="输入 API Token（config.yaml 中 api_server.tokens 配置的值）")
+security_scheme = HTTPBearer(auto_error=True)
 
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security_scheme)):
