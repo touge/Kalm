@@ -9,7 +9,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.staticfiles import StaticFiles
 
 from src.logic.yaml_config_loader import yaml_config_loader
@@ -18,6 +18,7 @@ from src.core.scheduler import scheduler
 from src.core.ws_manager import ws_manager
 from src.logic.logger import log
 from src.api.routes import system, tasks, llm, file_proxy, ws_proxy, stream_proxy, queue_ws
+from src.core.security import verify_token
 
 
 @asynccontextmanager
@@ -50,14 +51,14 @@ def create_app() -> FastAPI:
     Path(task_folder).mkdir(parents=True, exist_ok=True)
     app.mount("/files", StaticFiles(directory=task_folder), name="files")
 
-    # 注册路由
-    app.include_router(system.router, prefix="/interface")
-    app.include_router(tasks.router, prefix="/interface")
-    app.include_router(llm.router, prefix="/interface")
-    app.include_router(ws_proxy.router, prefix="/interface")
-    app.include_router(stream_proxy.router, prefix="/interface")
-    app.include_router(queue_ws.router, prefix="/interface")
-    app.include_router(file_proxy.router)
+    # 注册路由（所有 /interface 路由启用 Bearer Token 验证）
+    app.include_router(system.router, prefix="/interface", dependencies=[Depends(verify_token)])
+    app.include_router(tasks.router, prefix="/interface", dependencies=[Depends(verify_token)])
+    app.include_router(llm.router, prefix="/interface", dependencies=[Depends(verify_token)])
+    app.include_router(ws_proxy.router, prefix="/interface", dependencies=[Depends(verify_token)])
+    app.include_router(stream_proxy.router, prefix="/interface", dependencies=[Depends(verify_token)])
+    app.include_router(queue_ws.router, prefix="/interface", dependencies=[Depends(verify_token)])
+    app.include_router(file_proxy.router, dependencies=[Depends(verify_token)])
 
     return app
 

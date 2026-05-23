@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from src.core.response import success
-from src.core.security import verify_token
 from src.core.service_controller import service_controller
 
-# router = APIRouter(tags=["System"], dependencies=[Depends(verify_token)])
 router = APIRouter(tags=["System"])
 
 
