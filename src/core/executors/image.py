@@ -33,19 +33,25 @@ def execute(task_id: str, **payload):
     client_id = payload.get("client_id", task_id[:8])
 
     if not workflow or not final_output_node_id:
+        log.error(f"[Image] >>> task_id={task_id} 缺少 workflow 或 final_output_node_id")
         TaskManager.update_task(task_id, TaskManager.STATUS_FAILED,
             {"message": "Missing 'workflow' or 'final_output_node_id' in payload"})
         ws_manager.send(task_id, {"type": "task_failed",
             "message": "Missing 'workflow' or 'final_output_node_id' in payload"})
         return
 
-    service_url = service_controller.get_service_url("ComfyUI")
+    service_name = payload.get("_service_name", "ComfyUI")
+    log.info(f"[Image] >>> task_id={task_id} 获取服务地址, service_name={service_name}...")
+    service_url = service_controller.get_service_url(service_name)
     if not service_url:
+        log.error(f"[Image] >>> task_id={task_id} 服务地址获取失败, service_name={service_name}")
         TaskManager.update_task(task_id, TaskManager.STATUS_FAILED,
             {"message": "ComfyUI service not available"})
         ws_manager.send(task_id, {"type": "task_failed",
             "message": "ComfyUI service not available"})
         return
+
+    log.info(f"[Image] >>> task_id={task_id} ComfyUI 地址={service_url}")
 
     if "://" not in service_url:
         service_url = f"http://{service_url}"
@@ -61,8 +67,10 @@ def execute(task_id: str, **payload):
         ws_manager.send(task_id, raw_message)
 
     try:
+        log.info(f"[Image] >>> task_id={task_id} 开始提交 workflow 到 ComfyUI...")
         TaskManager.update_task(task_id, TaskManager.STATUS_RUNNING, {"message": "Submitting to ComfyUI..."})
         final_outputs = client.run_workflow(workflow, client_id, progress_callback)
+        log.info(f"[Image] >>> task_id={task_id} workflow 执行完成, outputs={list(final_outputs.keys()) if final_outputs else 'EMPTY'}")
 
         TaskManager.update_task(task_id, TaskManager.STATUS_SUCCESS, result={
             "message": "Image generation completed",
@@ -71,7 +79,7 @@ def execute(task_id: str, **payload):
         ws_manager.send(task_id, {"type": "task_complete", "status": "success",
             "message": "Image generation completed", "outputs": final_outputs})
     except Exception as e:
-        log.error(f"[Image Executor] Task {task_id} failed: {e}", exc_info=True)
+        log.error(f"[Image] >>> task_id={task_id} 执行失败: {e}", exc_info=True)
         TaskManager.update_task(task_id, TaskManager.STATUS_FAILED, {"message": str(e)})
         ws_manager.send(task_id, {"type": "task_failed", "message": str(e)})
 
@@ -86,13 +94,19 @@ class _ComfyUIClient:
         self.ws_url = f"ws://{server_address}:{port}/ws"
 
     def run_workflow(self, workflow: dict, client_id: str, message_callback: callable) -> dict:
+        log.info(f"[Image] >>> _queue_prompt 开始...")
         prompt_id = self._queue_prompt(workflow, client_id)
+        log.info(f"[Image] >>> _queue_prompt 完成, prompt_id={prompt_id}")
         message_callback({"status": "queued", "prompt_id": prompt_id})
 
+        log.info(f"[Image] >>> _track_progress 开始, prompt_id={prompt_id}")
         self._track_progress(prompt_id, client_id, message_callback)
+        log.info(f"[Image] >>> _track_progress 完成, prompt_id={prompt_id}")
 
+        log.info(f"[Image] >>> _get_history 开始, prompt_id={prompt_id}")
         history = self._get_history(prompt_id)
         outputs = history.get(prompt_id, {}).get("outputs", {})
+        log.info(f"[Image] >>> _get_history 完成, outputs keys={list(outputs.keys())}")
         message_callback({"status": "completed", "prompt_id": prompt_id, "output_nodes": list(outputs.keys())})
         return outputs
 
@@ -131,6 +145,8 @@ class _ComfyUIClient:
                     message_callback(data)
                     raise RuntimeError(f"ComfyUI execution error: {json.dumps(data.get('data', {}))}")
                 if msg_type == "executed" and data.get("data", {}).get("prompt_id") == prompt_id:
+                    log.info(f"[Image] >>> _track_progress 收到 executed, prompt_id={prompt_id}")
                     break
         finally:
             ws.close()
+            log.info(f"[Image] >>> _track_progress WS 已关闭, prompt_id={prompt_id}")

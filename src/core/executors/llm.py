@@ -27,6 +27,8 @@ def execute(task_id: str, **payload):
     prompt = payload.get("prompt", "")
     options = payload.get("options", {})
 
+    service_name = payload.get("_service_name", "Ollama")
+
     if not model or not prompt:
         TaskManager.update_task(task_id, TaskManager.STATUS_FAILED,
             {"message": "Missing 'model' or 'prompt' in payload"})
@@ -35,15 +37,15 @@ def execute(task_id: str, **payload):
     try:
         TaskManager.update_task(task_id, TaskManager.STATUS_RUNNING,
             {"message": "Sending to Ollama..."})
-        result = _call_ollama(model, prompt, options)
+        result = _call_ollama(service_name, model, prompt, options)
         TaskManager.update_task(task_id, TaskManager.STATUS_SUCCESS, result=result)
     except Exception as e:
         log.error(f"[LLM Executor] Task {task_id} failed: {e}", exc_info=True)
         TaskManager.update_task(task_id, TaskManager.STATUS_FAILED, {"message": str(e)})
 
 
-def _call_ollama(model: str, prompt: str, options: dict) -> dict:
-    base_url = service_controller.get_service_url("Ollama")
+def _call_ollama(service_name: str, model: str, prompt: str, options: dict) -> dict:
+    base_url = service_controller.get_service_url(service_name)
     if not base_url:
         raise RuntimeError("Ollama service not available")
 
@@ -80,6 +82,8 @@ def execute_stream(task_id: str, output_queue: queue.Queue, **payload):
     prompt = payload.get("prompt", "")
     options = payload.get("options", {})
 
+    service_name = payload.get("_service_name", "Ollama")
+
     if not model or not prompt:
         output_queue.put(json.dumps({"error": "Missing 'model' or 'prompt' in payload"}))
         output_queue.put(None)
@@ -89,7 +93,7 @@ def execute_stream(task_id: str, output_queue: queue.Queue, **payload):
             "message": "Missing 'model' or 'prompt' in payload"})
         return
 
-    base_url = service_controller.get_service_url("Ollama")
+    base_url = service_controller.get_service_url(service_name)
     if not base_url:
         output_queue.put(json.dumps({"error": "Ollama service not available"}))
         output_queue.put(None)

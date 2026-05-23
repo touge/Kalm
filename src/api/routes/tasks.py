@@ -76,6 +76,7 @@ async def submit_task(request: Request):
 
         task_type = body.get("task_type", "")
         payload = body.get("payload", {})
+        log.info(f"[API] 客户端原始请求: task_type='{task_type}', payload keys={list(payload.keys())}")
 
         if not task_type:
             return error("Missing 'task_type' in request body", 400)
@@ -89,7 +90,9 @@ async def submit_task(request: Request):
         return error(f"Unknown task type: '{task_type}'. Known types: {known_types}", 400)
 
     try:
+        log.info(f"[API] >>> submit_task 调用前: type={internal_type}, task_id={task_id}")
         scheduler.submit_task(internal_type, task_id, payload)
+        log.info(f"[API] >>> submit_task 返回后: type={internal_type}, task_id={task_id}")
         TaskManager.update_task(task_id, TaskManager.STATUS_QUEUED)
         log.info(f"[API] Task {task_id} submitted: type={internal_type}")
 

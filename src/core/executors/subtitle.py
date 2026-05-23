@@ -15,7 +15,6 @@ from src.core.task_manager import TaskManager
 from src.core.ws_manager import ws_manager
 from src.logic.logger import log
 
-RESOURCE_NAME = "TTS"
 POLL_INTERVAL = 2
 MAX_POLL_SECONDS = 600
 
@@ -44,10 +43,11 @@ def execute(task_id: str, **payload):
                                  "upload audio_file via multipart/form-data"})
         return
 
-    svc = service_controller.get_service_config(RESOURCE_NAME)
+    service_name = payload.get("_service_name", "TTS")
+    svc = service_controller.get_service_config(service_name)
     if not svc:
         TaskManager.update_task(task_id, TaskManager.STATUS_FAILED,
-                                {"message": f"Service '{RESOURCE_NAME}' not configured"})
+                                {"message": f"Service '{service_name}' not configured"})
         return
 
     base_url = f"{svc['host']}:{svc['port']}"

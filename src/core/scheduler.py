@@ -98,12 +98,14 @@ class TaskScheduler:
     def submit_task(self, task_type: str, task_id: str, payload: Dict[str, Any],
                     output_queue=None, started_event=None):
         track_mode = self.task_track_modes.get(task_type, "poll")
+        log.info(f"[Scheduler] >>> submit_task 进入: {task_id} ({task_type}), 当前队列大小={self.task_queue.qsize()}")
         task_item = {
             "type": task_type, "id": task_id, "payload": payload,
             "output_queue": output_queue, "started_event": started_event,
             "track_mode": track_mode,
         }
         self.task_queue.put(task_item)
+        log.info(f"[Scheduler] >>> submit_task 已入队: {task_id} ({task_type}), 新队列大小={self.task_queue.qsize()}")
         log.info(f"[Scheduler] Task {task_id} ({task_type}) enqueued. Queue size: {self.task_queue.qsize()}")
         # 广播入队通知
         ws_manager.broadcast_queue({
@@ -136,6 +138,8 @@ class TaskScheduler:
                 output_queue = task.get("output_queue")
                 started_event = task.get("started_event")
 
+                log.info(f"[Scheduler] >>> 从队列取出: {task_id} ({task_type}), 剩余队列大小={self.task_queue.qsize()}")
+
                 log.info(f"[Scheduler] Processing task {task_id} ({task_type})")
 
                 # 通知流式端点：任务已开始执行
@@ -162,8 +166,8 @@ class TaskScheduler:
                     else:
                         log.info(f"[Scheduler] Reusing active service '{self.current_service_name}'")
 
-                # 执行任务
-                self._execute_task_logic(task_type, task_id, payload, output_queue)
+                # 执行任务（传入服务名，executor 不需要硬编码）
+                self._execute_task_logic(task_type, task_id, payload, output_queue, required_service)
                 self.task_queue.task_done()
 
                 # 广播任务完成（含下一任务信息）
@@ -269,14 +273,19 @@ class TaskScheduler:
             log.warning(f"[Scheduler] Free failed (non-critical): {e}")
 
     def _execute_task_logic(self, task_type: str, task_id: str, payload: Dict[str, Any],
-                            output_queue=None):
+                            output_queue=None, service_name=None):
         try:
             executor = self.task_executors.get(task_type)
             if executor:
+                # 注入服务名到 payload，executor 不硬编码服务名
+                if service_name:
+                    payload["_service_name"] = service_name
+                log.info(f"[Scheduler] >>> 开始执行: {task_id} ({task_type}), executor={executor.__module__}.{executor.__name__}, service={service_name}")
                 if output_queue is not None:
                     executor(task_id, output_queue, **payload)
                 else:
                     executor(task_id, **payload)
+                log.info(f"[Scheduler] >>> 执行完成: {task_id} ({task_type})")
             else:
                 log.error(f"[Scheduler] Unknown task type: '{task_type}'. No executor registered.")
                 TaskManager.update_task(task_id, TaskManager.STATUS_FAILED, {

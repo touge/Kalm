@@ -57,7 +57,7 @@ ComfyUI_Linux:
   type: sh
   path: "/root/workspace/comfyui/run.sh"
   host: "http://127.0.0.1"
-  port: 8189
+  port: 7001
   ready_keyword: "To see the GUI go to"
   manage_lifecycle: true
   startup_timeout: 300
@@ -91,7 +91,7 @@ TTS_Linux:
   type: sh
   path: "/root/workspace/indextts-api/p8001.sh"
   host: "http://127.0.0.1"
-  port: 8001
+  port: 7002
   token: "123456"
   ready_keyword: "started"
   manage_lifecycle: true

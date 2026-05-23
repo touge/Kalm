@@ -16,6 +16,7 @@ from fastapi.responses import Response
 from src.core.service_controller import service_controller
 from src.core.response import error
 from src.logic.logger import log
+from src.logic.yaml_config_loader import yaml_config_loader
 
 router = APIRouter(tags=["Proxy"])
 
@@ -43,10 +44,17 @@ async def proxy_file(service_name: str, file_path: str, request: Request):
     """
     通用文件代理：从指定后端服务拉取文件并返回给前端，或向其发送文件。
 
-    - service_name: 对应 services.yaml 中的服务名（如 ComfyUI, TTS）
+    - service_name: 可以是 task_type（如 comfyui）或实际服务名（如 ComfyUI_Windows）
     - file_path: 文件在后端服务上的路径
+
+    service_name 优先作为 task_type 查 config.yaml 的 tasks.{task_type}.service 得到实际服务名，
+    找不到则直接用原值查 services.yaml。
     """
-    service_url = service_controller.get_service_url(service_name)
+    # 优先通过 task_type → config.yaml tasks.{task_type}.service 解析实际服务名
+    tasks_config = yaml_config_loader.get("tasks", {})
+    actual_service = tasks_config.get(service_name, {}).get("service", service_name)
+
+    service_url = service_controller.get_service_url(actual_service)
     if not service_url:
         return error(f"Service '{service_name}' not found", 404)
 
@@ -56,14 +64,14 @@ async def proxy_file(service_name: str, file_path: str, request: Request):
 
     headers = dict(request.headers)
 
-    svc = service_controller.get_service_config(service_name)
+    svc = service_controller.get_service_config(actual_service)
     if svc:
         token = svc.get("token", "")
         if token:
             headers["Authorization"] = f"Bearer {token}"
 
     try:
-        service_controller.download_begin(service_name)
+        service_controller.download_begin(actual_service)
 
         loop = asyncio.get_event_loop()
         
@@ -81,7 +89,7 @@ async def proxy_file(service_name: str, file_path: str, request: Request):
             log.warning(f"[FileProxy] Backend returned {status_code}: {backend_url}")
             return error(f"Backend returned {status_code}", status_code)
 
-        log.info(f"[FileProxy] {service_name}:{file_path} -> {len(content)} bytes")
+        log.info(f"[FileProxy] {actual_service}:{file_path} -> {len(content)} bytes")
 
         response_headers = {}
         for key in ("content-type", "content-length", "content-disposition", "etag", "cache-control"):
@@ -101,4 +109,4 @@ async def proxy_file(service_name: str, file_path: str, request: Request):
         log.error(f"[FileProxy] Error proxying {backend_url}: {e}")
         return error(f"Proxy error: {str(e)}", 500)
     finally:
-        service_controller.download_end(service_name)
+        service_controller.download_end(actual_service)

@@ -72,8 +72,13 @@ class _ServiceController:
     def _find_service_key(self, name: str) -> str | None:
         """大小写不敏感查找服务键名。Ollama / ollama / OLLAMA 均匹配。"""
         name_lower = name.lower()
+        # 第一步：精确匹配（大小写不敏感）
         for key in self.services:
             if key.lower() == name_lower:
+                return key
+        # 第二步：模糊匹配（如 ComfyUI → ComfyUI_Windows, TTS → TTS_Windows）
+        for key in self.services:
+            if name_lower in key.lower():
                 return key
         return None
 

@@ -19,14 +19,31 @@ GET  /file/{service}/{path}      → httpx → 后端 → 流式返回前端
 
 - 调度器：`src/core/scheduler.py`，单例单线程，`queue.Queue` + 服务生命周期。支持普通任务和流式任务（带 `output_queue`/`started_event`）。支持智能资源释放（详见下方"资源释放策略"）。
 - 执行器：`src/core/executors/*.py`，每个只做 提交→透传。普通执行器签名 `def execute(task_id, **payload)`，流式执行器签名 `def execute_stream(task_id, output_queue, **payload)`。
-- 文件代理：`src/api/routes/file_proxy.py`，通用端点，按 service_name 动态查后端地址。使用 requests 库同步拉取 + ThreadPoolExecutor。
+- 文件代理：`src/api/routes/file_proxy.py`，通用端点。`service_name` 可以是 `task_type`（如 `comfyui`），通过 `config.yaml` 的 `tasks.{task_type}.service` 映射到实际服务名（如 `ComfyUI_Windows`）。使用 requests 库同步拉取 + ThreadPoolExecutor。
 - 任务提交支持 JSON 和 multipart/form-data 两种 Content-Type（字幕任务需文件上传）。
-- 服务管理：`src/core/service_controller.py`，引用计数 + 子进程启停。服务名大小写不敏感。支持 `auto_start` 常驻模式（Kalm 启动时自动拉起，常驻不回收）和启动时端口强杀。
+- 服务管理：`src/core/service_controller.py`，引用计数 + 子进程启停。`_find_service_key` 大小写不敏感，精确匹配失败后模糊匹配兜底（`ComfyUI` → `ComfyUI_Windows`）。支持 `auto_start` 常驻模式（Kalm 启动时自动拉起，常驻不回收）和启动时端口强杀。
 - 任务状态：`src/core/task_manager.py`，内存字典 + threading.Lock + TTL 自动清理。
 - WS 管理：`src/core/ws_manager.py`，桥接同步执行器线程 → 异步 WS 推送（`run_coroutine_threadsafe`）。支持 per-task 推送和全局队列广播（`broadcast_queue()`）。
 - WS 端点：`src/api/routes/ws_proxy.py`，前端连 `/tasks/{id}/ws` 获取实时进度。内部有兜底轮询（`poll_fallback`，每 2 秒检查 TaskManager），不依赖特定后端协议的 WS 也能检测完成。
 - 队列广播端点：`src/api/routes/queue_ws.py`，前端连 `/queue/ws` 接收任务生命周期通知（`task_enqueued` / `task_started` / `task_completed`）。所有连接客户端收到相同广播，按 `task_id` 自行过滤。
 - 流式端点：`src/api/routes/stream_proxy.py`，前端 POST `/llm/generate-stream` 获取 NDJSON 流式响应。
+
+## 安全认证
+
+双层认证架构，`config.yaml` 中 `api_server.tokens` 配置驱动：
+
+| 层 | 机制 | 适用范围 |
+|---|---|---|
+| HTTP 依赖 | `require_token` + `OptionalHTTPBearer` + `Security()` | 所有 HTTP 路由，Swagger UI 自动显示 Authorize 按钮 |
+| WS 中间件 | `WebSocketAuthMiddleware` | 所有 WebSocket 连接，支持 `Authorization: Bearer` 和 `x-token` 两种 Header |
+
+`OptionalHTTPBearer` 是 `HTTPBearer` 的子类，`request` 参数可选：WebSocket 路由无 `Request` 对象时走默认值 `None` 跳过 HTTP 认证层，交由中间件处理。
+
+**WebSocket 认证失败反馈**：先 `accept()` 完成握手，再 `close(code=4001, reason="...")`。客户端通过关闭码 4001 区分认证失败与其他错误。
+
+**服务名解析**：`_find_service_key` 二级查找 — 精确匹配（大小写不敏感）→ 模糊匹配兜底（`ComfyUI` 匹配 `ComfyUI_Windows`）。
+
+详细使用指南：`API_AUTH.md`
 
 ## 协议透传原则
 
@@ -47,6 +64,7 @@ GET  /file/{service}/{path}      → httpx → 后端 → 流式返回前端
 - 流式 executor 函数签名：`def execute_stream(task_id: str, output_queue: queue.Queue, **payload):`，逐行写入 `output_queue`，结束写 `None`。
 - 支持 WS 推送的执行器：额外调用 `ws_manager.send(task_id, message)` 推送进度，完成时发 `{"type": "task_complete"}`，失败发 `{"type": "task_failed"}`。
 - executor 绝不做：下载文件、改写 URL、处理音频/图片、判断代理/下载模式。
+- executor 获取服务名：**统一从 `payload["_service_name"]` 获取**（调度器注入，来源于 `config.yaml` 的 `tasks.{task_type}.service`），不要硬编码服务名。默认值仅作 fallback。
 - 所有 API 响应走 `src/core/response.py` 的 `success()` / `error()` 辅助函数。
 - 环境变量用 `${VAR}` 语法在 `config.yaml` 中引用。
 - 日志用 `src/logic/logger.py` 的 `log` 实例，支持 `log.success()`。
@@ -94,8 +112,6 @@ GET  /file/{service}/{path}      → httpx → 后端 → 流式返回前端
 
 **心跳保活**：客户端每 30 秒发 `ping`，Kalm 回 `pong`，防止中间网络层断开空闲连接。
 
-详细接口文档：`docs/Kalm-队列WebSocket通知接口文档.md`
-
 ## 测试脚本
 
 | 脚本 | 说明 |
@@ -116,5 +132,3 @@ GET  /file/{service}/{path}      → httpx → 后端 → 流式返回前端
 pip install -r requirements.txt
 python main.py
 ```
-
-详细文档：`docs/技术文档.md`
