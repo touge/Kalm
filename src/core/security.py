@@ -2,7 +2,10 @@
 """
 API 安全认证
 ============
-使用中间件方式验证 Bearer Token，同时支持 HTTP 和 WebSocket 连接。
+使用 FastAPI 原生 Security + Depends 机制验证 Bearer Token，
+这样 /docs 页面会自动显示 Authorize 按钮。
+
+同时保留 WebSocket 中间件认证（WebSocket 不支持 Depends）。
 
 配置：config.yaml 中 api_server.tokens
 - 留空则跳过认证
@@ -10,72 +13,56 @@ API 安全认证
 - WebSocket 请求通过 query 参数 ?token=<token> 或 Sec-WebSocket-Protocol 头验证
 """
 
-from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi import Depends, HTTPException, Security, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.websockets import WebSocket
 from starlette.responses import JSONResponse
 from src.logic.yaml_config_loader import yaml_config_loader
 
-
-# 不需要认证的路径前缀
-PUBLIC_PATHS = [
-    "/docs",
-    "/openapi.json",
-    "/redoc",
-    "/favicon.ico",
-    "/openapi",
-]
+# FastAPI 原生的 Bearer token 提取器
+security_scheme = HTTPBearer(name="Bearer Token", description="输入 API Token（config.yaml 中 api_server.tokens 配置的值）")
 
 
-def _is_public_path(path: str) -> bool:
-    """检查路径是否为公开路径（跳过认证）"""
-    return any(path.startswith(p) for p in PUBLIC_PATHS)
+def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security_scheme)):
+    """
+    验证 Bearer Token。使用 FastAPI Depends 机制，
+    这样 /docs 页面会自动显示 Authorize 按钮。
+    """
+    tokens = yaml_config_loader.get("api_server.tokens", [])
+    if not tokens:
+        # 未配置 token，跳过认证
+        return True
+
+    if credentials.credentials not in tokens:
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+    return True
 
 
-class TokenAuthMiddleware:
-    """同时支持 HTTP 和 WebSocket 的 Token 认证中间件"""
+def require_token():
+    """
+    在路由中使用: endpoint(..., dependencies=[Depends(require_token)])
+    或在路由参数中直接: token = Depends(require_token)
+    """
+    return verify_token()
+
+
+class WebSocketAuthMiddleware:
+    """WebSocket 专用认证中间件 — 只处理 websocket 类型请求"""
 
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        from starlette.requests import Request
-        from starlette.websockets import WebSocket as StarletteWebSocket
+        if scope["type"] != "websocket":
+            await self.app(scope, receive, send)
+            return
 
-        if scope["type"] == "http":
-            request = Request(scope)
-            # 公开路径跳过认证
-            if not _is_public_path(request.url.path):
-                if not self._verify_http_token(request):
-                    response = JSONResponse(
-                        status_code=401,
-                        content={"detail": "Missing or invalid authentication token"},
-                    )
-                    await response(scope, receive, send)
-                    return
-        elif scope["type"] == "websocket":
-            ws = StarletteWebSocket(scope)
-            if not self._verify_ws_token(ws):
-                await ws.close(code=4001, reason="Missing or invalid authentication token")
-                return
+        ws = WebSocket(scope)
+        if not self._verify_ws_token(ws):
+            await ws.close(code=4001, reason="Missing or invalid authentication token")
+            return
 
         await self.app(scope, receive, send)
-
-    def _verify_http_token(self, request) -> bool:
-        tokens = yaml_config_loader.get("api_server.tokens", [])
-        if not tokens:
-            return True
-
-        authorization = request.headers.get("authorization", "")
-        if not authorization:
-            return False
-
-        # 支持 "Bearer <token>" 格式
-        parts = authorization.split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            return parts[1] in tokens
-
-        # 也直接支持 token 字符串
-        return authorization in tokens
 
     def _verify_ws_token(self, ws) -> bool:
         tokens = yaml_config_loader.get("api_server.tokens", [])
@@ -88,7 +75,6 @@ class TokenAuthMiddleware:
             return True
 
         # 方式2: 从 Subprotocols 获取 token
-        # 客户端可以发送: Sec-WebSocket-Protocol: Bearer <token>
         subprotocols = ws.headers.get("sec-websocket-protocol", "")
         if subprotocols:
             for proto in subprotocols.split(","):

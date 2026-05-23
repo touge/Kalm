@@ -55,7 +55,7 @@ ComfyUI_Windows:
 
 ComfyUI_Linux:
   type: sh
-  path: "/opt/ComfyUI/start.sh"
+  path: "/root/workspace/comfyui/run.sh"
   host: "http://127.0.0.1"
   port: 8189
   ready_keyword: "To see the GUI go to"
@@ -89,7 +89,7 @@ TTS_Windows:
 
 TTS_Linux:
   type: sh
-  path: "/opt/IndexTTS-API/start.sh"
+  path: "/root/workspace/indextts-api/p8001.sh"
   host: "http://127.0.0.1"
   port: 8001
   token: "123456"

@@ -9,7 +9,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -19,7 +19,7 @@ from src.core.scheduler import scheduler
 from src.core.ws_manager import ws_manager
 from src.logic.logger import log
 from src.api.routes import system, tasks, llm, file_proxy, ws_proxy, stream_proxy, queue_ws
-from src.core.security import TokenAuthMiddleware
+from src.core.security import WebSocketAuthMiddleware, require_token
 
 
 @asynccontextmanager
@@ -45,10 +45,11 @@ def create_app() -> FastAPI:
         version=app_config.get("version", "1.0.0"),
         debug=debug,
         lifespan=lifespan,
+        dependencies=[Depends(require_token)],  # 全局认证依赖 — docs 页面会自动显示 Authorize 按钮
     )
 
-    # 添加 Token 认证中间件（同时支持 HTTP 和 WebSocket）
-    app.add_middleware(TokenAuthMiddleware)
+    # 添加 WebSocket 认证中间件（WebSocket 不支持 Depends，只能用中间件）
+    app.add_middleware(WebSocketAuthMiddleware)
 
     # 静态文件挂载（任务产物目录）
     task_folder = yaml_config_loader.get("paths.task_folder", "tasks")
