@@ -329,9 +329,13 @@ class _ServiceController:
             key = real_key
 
             # ---- auto_start：常驻服务，已在 Kalm 启动时运行，无需操作 ----
+            # 但如果端口不在（服务挂了），需要重新拉起
             if self.is_auto_start(key):
-                log.info(f"Service '{key}' is auto-started, always running.")
-                return
+                port = svc.get("port")
+                if port and self._get_pid_by_port(port):
+                    log.info(f"Service '{key}' is auto-started, already running on port {port}.")
+                    return
+                log.warning(f"Auto-started service '{key}' is not running, re-launching...")
 
             # ---- 外部管理：只维护引用计数，不碰进程 ----
             if svc.get("manage_lifecycle") is False:
