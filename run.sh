@@ -206,12 +206,12 @@ if [ -n "$HOST_ADDRESS" ] || [ -n "$PORT" ]; then
         ORIGINAL_CONFIG=$(cat "$SCRIPT_DIR/config.yaml")
         
         if [ -n "$HOST_ADDRESS" ]; then
-            sed -i "/^api_server:/,/^[a-zA-Z]/ s/^[[:space:]]*host:.*/  host: \"${HOST_ADDRESS}\"/" "$SCRIPT_DIR/config.yaml"
+            sed -i '/^api_server:/,/^[a-zA-Z]/ s/^[[:space:]]*host:.*/  host: '"$HOST_ADDRESS"'/' "$SCRIPT_DIR/config.yaml"
             echo -e "${CYAN}  - Set Host: $HOST_ADDRESS${NC}"
         fi
         
         if [ -n "$PORT" ]; then
-            sed -i "/^api_server:/,/^[a-zA-Z]/ s/^[[:space:]]*port:.*/  port: ${PORT}/" "$SCRIPT_DIR/config.yaml"
+            sed -i '/^api_server:/,/^[a-zA-Z]/ s/^[[:space:]]*port:.*/  port: '"$PORT"'/' "$SCRIPT_DIR/config.yaml"
             echo -e "${CYAN}  - Set Port: $PORT${NC}"
         fi
         
