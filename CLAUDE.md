@@ -35,7 +35,7 @@ GET  /file/{service}/{path}      → httpx → 后端 → 流式返回前端
 
 | 层 | 机制 | 适用范围 |
 |---|---|---|
-| HTTP 依赖 | `require_token` + `OptionalHTTPBearer` + `Security()` | 所有 HTTP 路由，Swagger UI 自动显示 Authorize 按钮 |
+| HTTP 路由 | `include_router(dependencies=[Depends(require_token)])` | main.py 中对 5 个 HTTP router 统一挂载，Swagger UI 自动显示 Authorize 按钮 |
 | WS 中间件 | `WebSocketAuthMiddleware` | 仅 Kalm 路径（`/interface/queue/ws`、`/interface/tasks/*`）需认证，其他 WS 路径（如平台探活 `/ws`）直接关闭码 1000，不触发认证 |
 
 `OptionalHTTPBearer` 是 `HTTPBearer` 的子类，`request` 参数可选：WebSocket 路由无 `Request` 对象时走默认值 `None` 跳过 HTTP 认证层，交由中间件处理。

@@ -45,7 +45,7 @@ def create_app() -> FastAPI:
         version=app_config.get("version", "1.0.0"),
         debug=debug,
         lifespan=lifespan,
-        dependencies=[Depends(require_token)],  # 全局认证依赖 — docs 页面会自动显示 Authorize 按钮
+        # 认证由各 router 按需配置，不设全局依赖
     )
 
     # ---- 平台监控伪装路由（安抚探活机器人，避免 404/401 刷屏）----
@@ -65,14 +65,17 @@ def create_app() -> FastAPI:
     Path(task_folder).mkdir(parents=True, exist_ok=True)
     app.mount("/files", StaticFiles(directory=task_folder), name="files")
 
-    # 注册路由
-    app.include_router(system.router, prefix="/interface")
-    app.include_router(tasks.router, prefix="/interface")
-    app.include_router(llm.router, prefix="/interface")
+    # ---- 注册路由 ----
+    # HTTP 路由：需要 Token 认证
+    _auth = [Depends(require_token)]
+    app.include_router(system.router, prefix="/interface", dependencies=_auth)
+    app.include_router(tasks.router, prefix="/interface", dependencies=_auth)
+    app.include_router(llm.router, prefix="/interface", dependencies=_auth)
+    app.include_router(stream_proxy.router, prefix="/interface", dependencies=_auth)
+    app.include_router(file_proxy.router, dependencies=_auth)
+    # WebSocket 路由：认证由 WebSocketAuthMiddleware 中间件处理，不加 HTTP 依赖
     app.include_router(ws_proxy.router, prefix="/interface")
-    app.include_router(stream_proxy.router, prefix="/interface")
     app.include_router(queue_ws.router, prefix="/interface")
-    app.include_router(file_proxy.router)
 
     return app
 
