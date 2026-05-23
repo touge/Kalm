@@ -23,10 +23,15 @@ from src.logic.yaml_config_loader import yaml_config_loader
 security_scheme = HTTPBearer(auto_error=True)
 
 
-def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security_scheme)):
+async def require_token(
+    credentials: HTTPAuthorizationCredentials = Security(security_scheme)
+):
     """
-    验证 Bearer Token。使用 FastAPI Depends 机制，
-    这样 /docs 页面会自动显示 Authorize 按钮。
+    全局认证依赖。使用 Security(security_scheme) 作为默认参数，
+    这样 FastAPI / Swagger UI 会自动在 docs 页面显示 Authorize 按钮。
+
+    关键：必须使用 Security() 而非 Depends() 作为参数默认值，
+    Swagger UI 才能识别这个安全方案并显示认证输入框。
     """
     tokens = yaml_config_loader.get("api_server.tokens", [])
     if not tokens:
@@ -36,14 +41,6 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security_sc
     if credentials.credentials not in tokens:
         raise HTTPException(status_code=401, detail="Invalid authentication token")
     return True
-
-
-def require_token():
-    """
-    在路由中使用: endpoint(..., dependencies=[Depends(require_token)])
-    或在路由参数中直接: token = Depends(require_token)
-    """
-    return verify_token()
 
 
 class WebSocketAuthMiddleware:
@@ -57,7 +54,7 @@ class WebSocketAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        ws = WebSocket(scope)
+        ws = WebSocket(scope, receive=receive, send=send)
         if not self._verify_ws_token(ws):
             await ws.close(code=4001, reason="Missing or invalid authentication token")
             return
