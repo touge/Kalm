@@ -6,14 +6,15 @@
 #   port             : 服务监听端口（需与后端实际端口一致）
 #   ready_keyword    : 启动完成标志 — 匹配 stdout 中的关键词，出现后认为服务就绪
 #   manage_lifecycle : true = Kalm 管理该服务的启停 / false = 外部管理，Kalm 不干预
-#   auto_start       : true = 系统启动时自动启动该服务，且不调用 manage_lifecycle 停止逻辑
-#                      false = 走正常的 manage_lifecycle 流程（与 manage_lifecycle 互斥）
 #   stop_command     : (仅 cmd 类型) 自定义停止命令，用于优雅关闭而非直接 kill 进程
 #   token            : (可选) API 鉴权 token，Kalm 转发请求时会附带
 #   env              : (可选) 子进程环境变量，格式为 KEY: "value"
 #   free_api         : (可选) 资源释放接口配置，无此配置则跳过释放
 #     path            : 释放接口路径（如 /api/free），会拼接在 host:port 之后
 #     body            : POST 请求体（JSON），具体字段由后端服务决定
+#
+# 注意：服务的自动启动由 config.yaml 中的 auto_start_services 配置控制，
+#       此处不再使用 auto_start 字段。
 # ============================================================================
 
 # ============================================================================
@@ -27,7 +28,6 @@ Ollama:
   port: 11434
   ready_keyword: "Listening"
   stop_command: 'powershell -Command "Invoke-RestMethod -Uri http://127.0.0.1:11434/api/generate -Method Post -ContentType ''application/json'' -Body ''{\"model\": \"gemma3:12b\", \"prompt\": \"unload\", \"keep_alive\": \"0s\"}'' -ErrorAction SilentlyContinue"'
-  auto_start: false
   manage_lifecycle: true
 
 # ============================================================================
@@ -40,7 +40,6 @@ ComfyUI_Windows:
   host: "http://127.0.0.1"
   port: 7001
   ready_keyword: "To see the GUI go to"
-  auto_start: true
   manage_lifecycle: true
   startup_timeout: 300
   free_api:
@@ -60,7 +59,6 @@ ComfyUI_Linux:
   host: "http://127.0.0.1"
   port: 8189
   ready_keyword: "To see the GUI go to"
-  auto_start: true
   manage_lifecycle: true
   startup_timeout: 300
   free_api:
@@ -83,7 +81,6 @@ TTS_Windows:
   port: 7002
   token: "123456"
   ready_keyword: "started"
-  auto_start: true
   manage_lifecycle: true
 
 # ============================================================================
@@ -97,7 +94,6 @@ TTS_Linux:
   port: 8001
   token: "123456"
   ready_keyword: "started"
-  auto_start: true
   manage_lifecycle: true
   env:
     CUDA_VISIBLE_DEVICES: "0"

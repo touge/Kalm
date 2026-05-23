@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 from collections import defaultdict
 from src.logic.logger import log
+from src.logic.yaml_config_loader import yaml_config_loader
 
 
 # ANSI 转义序列正则表达式 — 移除子进程输出中的颜色码
@@ -37,9 +38,13 @@ class _ServiceController:
     """服务控制器单例，管理 services.yaml 中定义的所有后端子进程。"""
 
     def __init__(self, config_path="services.yaml"):
-        # ---------- 加载配置文件 ----------
+        # ---------- 加载服务定义 ----------
         with open(config_path, encoding="utf-8") as f:
             self.services = yaml.safe_load(f)
+
+        # ---------- 从 config.yaml 读取 auto_start 服务列表 ----------
+        # 服务的自动启动由 config.yaml 中的 auto_start_services 配置控制
+        self.auto_start_services = yaml_config_loader.get("auto_start_services", [])
 
         # 项目根目录（main.py 的父目录）
         self.script_root = Path(__file__).resolve().parent.parent
@@ -77,9 +82,9 @@ class _ServiceController:
         return self._find_service_key(name) is not None
 
     def is_auto_start(self, service_name: str) -> bool:
-        """判断服务是否配置为 auto_start 常驻模式。"""
-        config = self.get_service_config(service_name)
-        return config.get("auto_start", False) if config else False
+        """判断服务是否在 config.yaml 的 auto_start_services 列表中。"""
+        key = self._find_service_key(service_name)
+        return key in self.auto_start_services if key else False
 
     def get_service_config(self, service_name: str) -> dict | None:
         """获取服务的完整配置字典。"""
@@ -112,7 +117,7 @@ class _ServiceController:
         svc = self.services[key]
 
         # ---- auto_start：已在 Kalm 启动时运行就绪，仅验证端口 ----
-        if svc.get("auto_start", False):
+        if self.is_auto_start(key):
             port = svc.get("port")
             if port and self._get_pid_by_port(port):
                 log.info(f"Service '{key}' is auto-started and already running on port {port}.")
@@ -141,7 +146,7 @@ class _ServiceController:
         key = self._find_service_key(service_name)
         svc = self.services.get(key, {}) if key else {}
         # auto_start 隐含 Kalm 管理（忽略 manage_lifecycle 配置）
-        is_managed = svc.get("auto_start", False) or svc.get("manage_lifecycle", True)
+        is_managed = self.is_auto_start(key) or svc.get("manage_lifecycle", True)
         port = svc.get("port")
         start_time = time.time()
 
@@ -211,31 +216,38 @@ class _ServiceController:
 
     def start_auto_services(self):
         """
-        Kalm 启动时自动启动所有 auto_start: true 的服务。
+        Kalm 启动时自动启动 config.yaml 中 auto_start_services 列出的服务。
         在 main.py 中 uvicorn.run 之前调用，确保服务在 API 就绪前启动完毕。
         auto_start 服务启动后常驻运行，不受引用计数回收影响。
         如果端口被外部进程占用，直接强杀后启动，确保是 Kalm 管理的实例。
         """
-        for key, svc in self.services.items():
-            if not svc.get("auto_start", False):
+        if not self.auto_start_services:
+            log.info("No auto_start_services configured in config.yaml.")
+            return
+
+        for key in self.auto_start_services:
+            real_key = self._find_service_key(key)
+            if not real_key:
+                log.warning(f"Auto-start service '{key}' not found in services.yaml, skipping.")
                 continue
+            svc = self.services[real_key]
             port = svc.get("port")
             # 端口被占 → 强杀后重启，确保是 Kalm 管理的实例
             if port and self._get_pid_by_port(port):
                 self._kill_process_on_port(port)
                 time.sleep(0.5)  # 等端口释放
-            log.info(f"Auto-starting service '{key}'...")
+            log.info(f"Auto-starting service '{real_key}'...")
             try:
-                self._launch_process(key, svc)
+                self._launch_process(real_key, svc)
                 self.wait_until_ready(
-                    key,
+                    real_key,
                     keyword=svc.get("ready_keyword", "started"),
                     timeout=svc.get("startup_timeout", 30),
                 )
             except Exception as e:
                 # 启动失败时清理残留进程和记录，避免影响后续任务
-                self._cleanup_process(key)
-                log.error(f"Failed to auto-start service '{key}': {e}")
+                self._cleanup_process(real_key)
+                log.error(f"Failed to auto-start service '{real_key}': {e}")
 
     # =========================================================================
     # 启停核心
@@ -312,7 +324,7 @@ class _ServiceController:
             key = real_key
 
             # ---- auto_start：常驻服务，已在 Kalm 启动时运行，无需操作 ----
-            if svc.get("auto_start", False):
+            if self.is_auto_start(key):
                 log.info(f"Service '{key}' is auto-started, always running.")
                 return
 
@@ -364,7 +376,7 @@ class _ServiceController:
             key = real_key
 
             # ---- auto_start：常驻服务，永不停止 ----
-            if svc.get("auto_start", False):
+            if self.is_auto_start(key):
                 log.info(f"Service '{key}' is auto-started, skipping stop (always running).")
                 return
 
