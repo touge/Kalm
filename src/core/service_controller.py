@@ -18,9 +18,19 @@ import yaml
 import time
 import threading
 import os
+import re
 from pathlib import Path
 from collections import defaultdict
 from src.logic.logger import log
+
+
+# ANSI 转义序列正则表达式 — 移除子进程输出中的颜色码
+_ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\([a-zA-Z]')
+
+
+def _strip_ansi(text: str) -> str:
+    """移除字符串中的 ANSI 转义序列（颜色码、格式控制等）。"""
+    return _ANSI_ESCAPE.sub('', text)
 
 
 class _ServiceController:
@@ -181,7 +191,8 @@ class _ServiceController:
 
             line = proc.stdout.readline()
             if line:
-                log.info(f"[{key}] {line.strip()}")
+                clean_line = _strip_ansi(line).strip()
+                log.info(f"[{key}] {clean_line}")
                 output_buffer += line
                 if keyword in line:
                     log.success(f"Service '{key}' is ready (keyword '{keyword}' found).")
@@ -587,7 +598,8 @@ class _ServiceController:
             while proc.poll() is None:
                 line = proc.stdout.readline()
                 if line:
-                    log.info(f"[{service_name}] {line.strip()}")
+                    clean_line = _strip_ansi(line).strip()
+                    log.info(f"[{service_name}] {clean_line}")
             log.info(f"Service '{service_name}' has exited.")
 
         threading.Thread(target=stream, daemon=True).start()

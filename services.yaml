@@ -60,7 +60,7 @@ ComfyUI_Linux:
   host: "http://127.0.0.1"
   port: 8189
   ready_keyword: "To see the GUI go to"
-  auto_start: false
+  auto_start: true
   manage_lifecycle: true
   startup_timeout: 300
   free_api:
@@ -97,7 +97,7 @@ TTS_Linux:
   port: 8001
   token: "123456"
   ready_keyword: "started"
-  auto_start: false
+  auto_start: true
   manage_lifecycle: true
   env:
     CUDA_VISIBLE_DEVICES: "0"
