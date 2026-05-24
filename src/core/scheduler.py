@@ -15,6 +15,7 @@ import threading
 import queue
 import time
 import importlib
+import subprocess
 import requests
 from typing import Dict, Any, Optional
 
@@ -248,6 +249,20 @@ class TaskScheduler:
         log.info(f"[Scheduler] Next task '{next_type}' != current '{current_task_type}', freeing resources...")
         self._free_service_resources(service_name)
 
+    @staticmethod
+    def _get_gpu_memory() -> str:
+        """查询 GPU 显存用量，返回人类可读字符串。nvidia-smi 不可用时返回 'N/A'。"""
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception:
+            pass
+        return "N/A"
+
     def _free_service_resources(self, service_name: str):
         """调用后端服务的资源释放接口。由 services.yaml 中的 free_api 配置驱动。"""
         svc_config = service_controller.get_service_config(service_name)
@@ -263,10 +278,14 @@ class TaskScheduler:
             return
         free_url = f"{service_url}{free_api['path']}"
         body = free_api.get("body", {})
+
+        gpu_before = self._get_gpu_memory()
+        log.info(f"[Scheduler] Calling free API: POST {free_url} body={body}")
         try:
             resp = requests.post(free_url, json=body, timeout=10)
             if resp.status_code == 200:
-                log.success(f"[Scheduler] Freed resources for {service_name}")
+                gpu_after = self._get_gpu_memory()
+                log.success(f"[Scheduler] Freed resources for {service_name} | GPU: {gpu_before} -> {gpu_after} | response: {resp.text[:200]}")
             else:
                 log.warning(f"[Scheduler] Free returned {resp.status_code}: {resp.text[:100]}")
         except Exception as e:

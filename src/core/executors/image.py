@@ -19,6 +19,40 @@ from src.core.ws_manager import ws_manager
 from src.logic.logger import log
 
 
+# 常见模型文件扩展名，用于识别路径字符串
+_MODEL_EXTENSIONS = (
+    # 主流格式
+    ".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".onnx",
+    # 量化/推理
+    ".gguf", ".ggml", ".engine", ".trt", ".tflite", ".xml",
+    # LoRA / LyCORIS
+    ".lora", ".lycoris", ".lokr", ".loha", ".glora", ".dylora",
+    # 其他模型格式
+    ".sft", ".pkl", ".h5", ".pb", ".hdf5", ".ot", ".torchscript",
+    ".msgpack", ".msg", ".npy", ".npz", ".zpt",
+)
+
+
+def _normalize_paths(obj, to_linux: bool):
+    """递归替换对象中路径字符串的分隔符，双向规范化。to_linux=True 时 \ → /，否则 / → \。"""
+    if isinstance(obj, str):
+        if any(ext in obj for ext in _MODEL_EXTENSIONS):
+            if to_linux and "\\" in obj:
+                normalized = obj.replace("\\", "/")
+                log.info(f"[Image] >>> 路径规范化 (->Linux): {obj} -> {normalized}")
+                return normalized
+            if not to_linux and "/" in obj:
+                normalized = obj.replace("/", "\\")
+                log.info(f"[Image] >>> 路径规范化 (->Windows): {obj} -> {normalized}")
+                return normalized
+        return obj
+    if isinstance(obj, dict):
+        return {k: _normalize_paths(v, to_linux) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_normalize_paths(v, to_linux) for v in obj]
+    return obj
+
+
 def execute(task_id: str, **payload):
     """
     图像生成任务入口。由调度器通过 importlib 动态调用。
@@ -52,6 +86,17 @@ def execute(task_id: str, **payload):
         return
 
     log.info(f"[Image] >>> task_id={task_id} ComfyUI 地址={service_url}")
+
+    # 平台路径规范化：匹配目标平台的路径分隔符
+    svc_config = service_controller.get_service_config(service_name)
+    if svc_config:
+        svc_type = svc_config.get("type")
+        if svc_type == "sh":
+            workflow = _normalize_paths(workflow, to_linux=True)
+            log.info(f"[Image] >>> task_id={task_id} 路径已规范化为 Linux 格式")
+        elif svc_type == "ps1":
+            workflow = _normalize_paths(workflow, to_linux=False)
+            log.info(f"[Image] >>> task_id={task_id} 路径已规范化为 Windows 格式")
 
     if "://" not in service_url:
         service_url = f"http://{service_url}"
@@ -136,6 +181,8 @@ class _ComfyUIClient:
                     continue
                 if not msg:
                     break
+                if isinstance(msg, bytes):
+                    continue
                 last_msg_time = time.time()
                 data = json.loads(msg)
                 msg_type = data.get("type", "")
