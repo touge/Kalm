@@ -276,9 +276,17 @@ class _ServiceController:
             ps1_path = str(Path(svc["path"]))
             cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File", ps1_path, "-Port", str(port)]
         elif svc["type"] == "sh":
-            # Linux bash 脚本方式：传 --port 参数
-            sh_path = str(svc["path"])
-            cmd = ["bash", sh_path, "--port", str(port)]
+            # Linux bash 脚本方式：直接拉起以支持脚本内部加载环境（依靠 Shebang 解析）
+            sh_path = os.path.abspath(svc["path"])
+            
+            try:
+                import stat
+                st = os.stat(sh_path)
+                os.chmod(sh_path, st.st_mode | stat.S_IEXEC)
+            except Exception as e:
+                log.warning(f"Failed to chmod +x for {sh_path}: {e}")
+
+            cmd = [sh_path, "--port", str(port)]
         elif svc["type"] == "cmd":
             # 直接命令方式
             cmd = ["powershell", "-Command", svc["command"]]
